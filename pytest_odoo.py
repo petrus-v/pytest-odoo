@@ -40,7 +40,8 @@ def pytest_addoption(parser):
                      type=int,
                      default=8069,
                      help="Base HTTP port for Odoo server (default: 8069). "
-                          "In parallel mode, workers use base_port+1, base_port+2, etc.")
+                          "In parallel mode (-n), workers use base_port+1, base_port+2, etc. "
+                          "to avoid port conflicts. Use with --odoo-http to start the HTTP server.")
     parser.addoption("--odoo-dev",
                      action="store")
     parser.addoption("--odoo-addons-path",
