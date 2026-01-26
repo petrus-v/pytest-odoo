@@ -6,6 +6,7 @@ from unittest import TestCase
 from _pytest import pathlib as pytest_pathlib
 from pytest_odoo import (
     _find_manifest_path,
+    _get_worker_number,
     monkey_patch_resolve_pkg_root_and_module_name,
     disable_odoo_test_retry,
 )
@@ -118,14 +119,53 @@ class TestPytestOdoo(TestCase):
 
 
     def test_import_error(self):
-        from odoo import tests 
-        
+        from odoo import tests
+
         original_BaseCase = tests.BaseCase
 
         def restore_basecase():
             tests.BaseCase = original_BaseCase
-        
+
         self.addCleanup(restore_basecase)
-        
+
         disable_odoo_test_retry()
-        
+
+
+class TestGetWorkerNumber(TestCase):
+    """Tests for _get_worker_number() helper function."""
+
+    def test_standard_xdist_format_gw0(self):
+        """Worker gw0 should return 0."""
+        self.assertEqual(_get_worker_number("gw0"), 0)
+
+    def test_standard_xdist_format_gw1(self):
+        """Worker gw1 should return 1."""
+        self.assertEqual(_get_worker_number("gw1"), 1)
+
+    def test_standard_xdist_format_gw99(self):
+        """Worker gw99 should return 99."""
+        self.assertEqual(_get_worker_number("gw99"), 99)
+
+    def test_empty_string_returns_zero(self):
+        """Empty string should return 0."""
+        self.assertEqual(_get_worker_number(""), 0)
+
+    def test_none_like_empty_returns_zero(self):
+        """Falsy values should return 0."""
+        self.assertEqual(_get_worker_number(None), 0)
+
+    def test_integer_string_fallback(self):
+        """Plain integer string should be parsed as fallback."""
+        self.assertEqual(_get_worker_number("5"), 5)
+
+    def test_invalid_gw_format_raises_valueerror(self):
+        """Invalid gw format (non-numeric suffix) should raise ValueError."""
+        with self.assertRaises(ValueError) as ctx:
+            _get_worker_number("gwabc")
+        self.assertIn("Unable to parse worker number", str(ctx.exception))
+
+    def test_unexpected_format_raises_valueerror(self):
+        """Completely unexpected format should raise ValueError."""
+        with self.assertRaises(ValueError) as ctx:
+            _get_worker_number("worker-1")
+        self.assertIn("Unexpected worker ID format", str(ctx.exception))
