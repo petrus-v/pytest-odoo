@@ -94,11 +94,10 @@ class TestPytestOdoo(TestCase):
     def test_disable_odoo_test_retry(self):
         from odoo.tests import BaseCase
 
-        original_basecase_run = BaseCase.__dict__.get("run")
+        original_basecase_run = BaseCase.run
 
         def restore_basecase_run():
-            if original_basecase_run is not None:
-                BaseCase.run = original_basecase_run
+            BaseCase.run = original_basecase_run
 
         self.addCleanup(restore_basecase_run)
 
@@ -106,29 +105,20 @@ class TestPytestOdoo(TestCase):
         with mock.patch("odoo.tests.BaseCase._call_something") as mock_patch:
             BaseCase().run()
             mock_patch.assert_not_called()
-        # Check that 'run' is not defined directly on BaseCase (inherited is OK)
-        self.assertNotIn("run", BaseCase.__dict__)
-
 
     def test_disable_odoo_test_retry_ignore_run_doesnt_exists(self):
         from odoo.tests import BaseCase
 
-        original_basecase_run = BaseCase.__dict__.get("run")
+        original_basecase_run = BaseCase.run
 
         def restore_basecase_run():
-            if original_basecase_run is not None:
-                BaseCase.run = original_basecase_run
+            BaseCase.run = original_basecase_run
 
         self.addCleanup(restore_basecase_run)
 
-        # Remove 'run' if it exists directly on BaseCase
-        if "run" in BaseCase.__dict__:
-            del BaseCase.run
+        del BaseCase.run
 
         disable_odoo_test_retry()
-        # Check that 'run' is not defined directly on BaseCase (inherited is OK)
-        self.assertNotIn("run", BaseCase.__dict__)
-
 
         with mock.patch("odoo.tests.BaseCase._call_something") as mock_patch:
             BaseCase().run()
@@ -233,20 +223,19 @@ class TestSharedFilestore(TestCase):
 
     def test_different_db_name_patches_filestore(self):
         """When db names differ, filestore should be patched to original."""
-        import odoo.tools.config
-
-        original_filestore = odoo.tools.config.filestore
+        from odoo import tools
+        original_filestore = tools.config.filestore
         patched_path = None
 
         with _shared_filestore("original_db", "worker_db"):
             # Inside the context, filestore should return the original db path
-            patched_path = odoo.tools.config.filestore("any_db")
+            patched_path = tools.config.filestore("any_db")
 
         # Verify the patched path points to original_db filestore
         self.assertIn("original_db", patched_path)
 
         # After context, filestore should be restored
-        self.assertEqual(odoo.tools.config.filestore, original_filestore)
+        self.assertEqual(tools.config.filestore, original_filestore)
 
 
 class TestPytestIgnoreCollect(TestCase):

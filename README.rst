@@ -55,3 +55,12 @@ The plugin is also compatible with distributed run provided by the `pytest-xdist
 This is useful to avoid concurrent access to the same database, which can lead to deadlocks. The provided database is therefore used only as template. At the end of the tests, all the created databases are dropped.
 
 The plugin is also compatible with `pytest-subtests <https://pypi.org/project/pytest-subtests/>`_ library. When test use the `subTest` context manager you'll get a nice output for each sub-tests failing.
+
+Prerequisites
+-------------
+
+To run the integration tests (which install Odoo dependencies), you need to have the following system dependencies installed (Debian/Ubuntu):
+
+.. code-block:: bash
+
+    sudo apt-get install python3-dev libxml2-dev libxslt1-dev libsasl2-dev libldap2-dev libssl-dev libpq-dev postgresql-client

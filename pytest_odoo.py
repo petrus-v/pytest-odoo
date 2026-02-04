@@ -20,6 +20,9 @@ import _pytest.python
 import pytest
 
 import odoo
+from odoo import release
+if release.version_info >= (19,0):
+    import odoo.tools, odoo.service, odoo.release, odoo.api, odoo.tests, odoo.sql_db, odoo.modules
 
 
 def pytest_addoption(parser):
@@ -133,7 +136,7 @@ def pytest_cmdline_main(config):
     else:
         yield
 
-@pytest.fixture(scope="module", autouse=True)
+@pytest.fixture(scope="session", autouse=True)
 def load_http(request):
     if request.config.getoption("--odoo-http"):
         # Configure worker-specific HTTP port if running under xdist
@@ -148,7 +151,15 @@ def load_http(request):
             except ValueError:
                 pass
 
-        odoo.service.server.start(stop=True)
+        # Force test_enable to True to ensure http_spawn is called
+        # regardless of when this fixture runs relative to enable_odoo_test_flag
+        old_test_enable = odoo.tools.config['test_enable']
+        odoo.tools.config['test_enable'] = True
+        try:
+             odoo.service.server.start(stop=True)
+        finally:
+             odoo.tools.config['test_enable'] = old_test_enable
+
         signal.signal(signal.SIGINT, signal.default_int_handler)
 
 
