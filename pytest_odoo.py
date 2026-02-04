@@ -36,6 +36,13 @@ def pytest_addoption(parser):
     parser.addoption("--odoo-http",
                      action="store_true",
                      help="If pytest should launch an Odoo http server.")
+    parser.addoption("--odoo-http-port",
+                     action="store",
+                     type=int,
+                     default=8069,
+                     help="Base HTTP port for Odoo server (default: 8069). "
+                          "In parallel mode (-n), workers use base_port+1, base_port+2, etc. "
+                          "to avoid port conflicts. Use with --odoo-http to start the HTTP server.")
     parser.addoption("--odoo-dev",
                      action="store")
     parser.addoption("--odoo-addons-path",
@@ -92,6 +99,22 @@ def pytest_cmdline_main(config):
         support_subtest()
         disable_odoo_test_retry()
         monkey_patch_resolve_pkg_root_and_module_name()
+
+        # Configure worker-specific HTTP port if running under xdist
+        xdist_worker = os.getenv("PYTEST_XDIST_WORKER")
+        if xdist_worker:
+            try:
+                worker_num = _get_worker_number(xdist_worker)
+                base_port = config.getoption("--odoo-http-port", default=8069)
+                # Use base_port + worker_num + 1 to avoid conflict with main process
+                # Main process uses base_port, workers use base_port+1, base_port+2, etc.
+                worker_port = base_port + worker_num + 1
+                odoo.tools.config["http_port"] = worker_port
+            except ValueError:
+                # If worker ID parsing fails, continue with default port
+                # Port conflict will occur, but better than crashing
+                pass
+
         odoo.service.server.start(preload=[], stop=True)
         # odoo.service.server.start() modifies the SIGINT signal by its own
         # one which in fact prevents us to stop anthem with Ctrl-c.
@@ -113,8 +136,50 @@ def pytest_cmdline_main(config):
 @pytest.fixture(scope="module", autouse=True)
 def load_http(request):
     if request.config.getoption("--odoo-http"):
+        # Configure worker-specific HTTP port if running under xdist
+        xdist_worker = os.getenv("PYTEST_XDIST_WORKER")
+        if xdist_worker:
+            try:
+                worker_num = _get_worker_number(xdist_worker)
+                base_port = request.config.getoption("--odoo-http-port", default=8069)
+                # Use base_port + worker_num + 1 to avoid conflict with main process
+                worker_port = base_port + worker_num + 1
+                odoo.tools.config["http_port"] = worker_port
+            except ValueError:
+                pass
+
         odoo.service.server.start(stop=True)
         signal.signal(signal.SIGINT, signal.default_int_handler)
+
+
+def _get_worker_number(xdist_worker: str) -> int:
+    """Extract worker number from PYTEST_XDIST_WORKER value.
+
+    Args:
+        xdist_worker: Worker ID like "gw0", "gw1", "gw2", etc.
+
+    Returns:
+        Worker number as integer (0, 1, 2, etc.)
+
+    Raises:
+        ValueError: If worker ID format is unexpected
+    """
+    if not xdist_worker:
+        return 0
+
+    # Standard pytest-xdist format: "gw" + number
+    if xdist_worker.startswith("gw"):
+        try:
+            return int(xdist_worker[2:])
+        except ValueError:
+            raise ValueError(f"Unable to parse worker number from '{xdist_worker}'")
+
+    # Fallback: try to parse as integer directly
+    try:
+        return int(xdist_worker)
+    except ValueError:
+        raise ValueError(f"Unexpected worker ID format: '{xdist_worker}'")
+
 
 @contextmanager
 def _shared_filestore(original_db_name, db_name):
@@ -133,20 +198,47 @@ def _shared_filestore(original_db_name, db_name):
         yield
 
 @contextmanager
-def _worker_db_name():
-    # This method ensure that if tests are ran in a distributed way
-    # thanks to the use of pytest-xdist addon, each worker will use
-    # a specific copy of the initial database to run their tests.
-    # In this way we prevent deadlock errors.
+def _worker_db_name(config=None):
+    """Configure worker-specific database and HTTP port for parallel execution.
+
+    When running under pytest-xdist, each worker receives:
+    - A unique database: {original_db_name}-{worker_id}
+    - A unique HTTP port: base_port + worker_number + 1
+
+    Args:
+        config: pytest Config object to access CLI options (optional)
+
+    Yields:
+        str: The database name for this worker
+    """
     xdist_worker = os.getenv("PYTEST_XDIST_WORKER")
     original_db_name = db_name = odoo.tests.common.get_db_name()
+    original_http_port = odoo.tools.config.get('http_port', 8069)
+
     try:
         if xdist_worker:
+            # Configure worker-specific database
             db_name = f"{original_db_name}-{xdist_worker}"
             subprocess.run(["dropdb", db_name, "--if-exists"], check=True)
             subprocess.run(["createdb", "-T", original_db_name, db_name], check=True)
             odoo.tools.config["db_name"] = db_name
             odoo.tools.config["dbfilter"] = f"^{db_name}$"
+
+            # Configure worker-specific HTTP port
+            try:
+                worker_num = _get_worker_number(xdist_worker)
+                base_port = original_http_port
+                if config:
+                    # Use CLI option if provided
+                    base_port = config.getoption("--odoo-http-port", default=8069)
+                # Use base_port + worker_num + 1 to avoid conflict with main process
+                # Main process uses base_port, workers use base_port+1, base_port+2, etc.
+                worker_port = base_port + worker_num + 1
+                odoo.tools.config["http_port"] = worker_port
+            except ValueError:
+                # If worker ID parsing fails, continue with original port
+                pass
+
         with _shared_filestore(original_db_name, db_name):
             yield db_name
     finally:
@@ -155,10 +247,12 @@ def _worker_db_name():
             subprocess.run(["dropdb", db_name, "--if-exists"], check=True)
             odoo.tools.config["db_name"] = original_db_name
             odoo.tools.config["dbfilter"] = f"^{original_db_name}$"
+            # Restore original HTTP port
+            odoo.tools.config["http_port"] = original_http_port
 
 
 @pytest.fixture(scope='session', autouse=True)
-def load_registry():
+def load_registry(request):
     # Initialize the registry before running tests.
     # If we don't do that, the modules will be loaded *inside* of the first
     # test we run, which would trigger the launch of the postinstall tests
@@ -168,7 +262,7 @@ def load_registry():
     # Finally we enable `testing` flag on current thread
     # since Odoo sets it when loading test suites.
     threading.current_thread().testing = True
-    with _worker_db_name() as db_name:
+    with _worker_db_name(config=request.config) as db_name:
         odoo.modules.registry.Registry(db_name)
         yield
 
