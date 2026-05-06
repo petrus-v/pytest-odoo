@@ -230,7 +230,6 @@ def support_subtest():
     try:
         from odoo.tests.case import TestCase
         TestCase.subTest = UnitTestTestCase.subTest
-        TestCase.run = UnitTestTestCase.run
     except ImportError:
         # Odoo <= 15.0
         pass
