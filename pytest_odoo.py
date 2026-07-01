@@ -126,7 +126,9 @@ def load_http(request, load_registry):
             server.server = server.ThreadedServer(http.root)
             server.server.start(stop=False)
             signal.signal(signal.SIGINT, signal.default_int_handler)
+            odoo.tools.config['test_enable'] = True
             yield
+            odoo.tools.config['test_enable'] = False
             server.server.stop()
         else:
             odoo.service.server.start(stop=True)
